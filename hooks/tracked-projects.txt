@@ -1,0 +1,7 @@
+# Tracked spoke projects (hooks read this list). One project root per line.
+# Put projects you orchestrate here. The status-digest / write-back-gate hooks
+# expect git + STATUS.md (they judge changes by git). spoke-onboard.sh appends here.
+#
+# Example (delete these and add your own absolute paths):
+# /absolute/path/to/acme-web
+# /absolute/path/to/acme-api

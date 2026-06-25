@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "$HOOKS_DIR/canonical-sync.sh", "timeout": 15, "statusMessage": "Syncing first-principles canonical…" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "$HOOKS_DIR/canonical-sync.sh", "timeout": 15 } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Write", "hooks": [ { "type": "command", "command": "$HOOKS_DIR/canonical-write-guard.sh", "timeout": 10 } ] }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+# canonical-sync per-session state (machine-local)
+.claude/canonical-sync-state/
+
+# settings.json backups created by install.sh
+.claude/settings.json.bak.*
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*~
+
+# local-only tracked-projects list (uncomment if you keep yours private)
+# hooks/tracked-projects.txt
