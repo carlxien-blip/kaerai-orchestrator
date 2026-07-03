@@ -88,7 +88,7 @@ We haven't seen another project do exactly this (cross-session canonical
 auto-sync via Claude Code hooks). Wire up just this one, feel the difference, then funnel into
 the full methodology when you're ready.
 
-## 5. Two battle-tested gotchas
+## 5. Three battle-tested gotchas
 
 These are the non-obvious lessons — the part you'd only learn by getting burned.
 
@@ -118,6 +118,20 @@ tries to act directly on a spoke (edit its files / a Bash command mentioning its
 call) and makes it self-classify: *keeping truth -> continue; doing work -> stop and dispatch.*
 Read is never guarded (reading live to keep truth is correct). Start non-blocking; upgrade to a
 hard block once you trust it.
+
+### Gotcha C — reuse workers before spawning; register on spawn; guard on the hub
+
+"Dispatch" is not the same as "spawn a fresh worker". Every fresh worker re-onboards the spoke
+from zero, and that onboarding is the orchestrator's dominant token cost — so spawning a new
+worker for each step of the same job re-pays it every time. Default should be **one active
+worker per spoke**: keep a tiny registry (`active-workers.json`), and continue a live worker via
+`SendMessage` instead of cold-starting a new Agent. Two non-obvious traps: **(a)** a hook meant
+to intercept hub-dispatched workers must live in the **hub / global** `settings.json`, not a
+spoke-local one — a hub-spawned worker runs in the hub's frame, so a spoke-local hook never
+fires for it; **(b)** **register on spawn by hand** — auto-registration via a PostToolUse hook on
+the Agent tool is unreliable, so don't count on it alone. Three hooks support this
+(`worker-registry-digest.sh`, `reuse-check-guard.sh`, `worker-registry-write.sh`). Full writeup:
+**[docs/worker-reuse.md](docs/worker-reuse.md)**.
 
 ## 6. Quick start (5 minutes)
 
@@ -160,11 +174,12 @@ apply — but the methodology in `ORCHESTRATOR.md` and `docs/` still travels).
 |---|---|
 | `README.md` | this file |
 | `ORCHESTRATOR.md` | the full operations manual |
-| `hooks/` | the 6 hooks, all paths parameterized via `hooks/config.sh` + env vars |
+| `hooks/` | the 9 hooks, all paths parameterized via `hooks/config.sh` + env vars |
+| `active-workers.example.json` | schema for the live worker registry (copy to `active-workers.json`, which is git-ignored) |
 | `scripts/spoke-onboard.sh` | idempotently bring a project up to the spoke contract |
 | `templates/` | empty-shell templates: hub/spoke CLAUDE.md, STATUS, first-principles, decision, asset-registry, contract checklist |
 | `examples/` | a worked, fictional example: one hub + two spokes (`acme-web`, `acme-api`) |
-| `docs/` | deeper dives: multi-session sync, intervention standard, doer/reviewer bias, brain/hands, comparison with BMAD & LangGraph |
+| `docs/` | deeper dives: worker reuse, multi-session sync, intervention standard, doer/reviewer bias, brain/hands, comparison with BMAD & LangGraph |
 | `install.sh` | wire hooks into the hub + set `HUB_DIR` |
 
 ## How it compares (briefly)

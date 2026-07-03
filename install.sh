@@ -61,6 +61,9 @@ WRITE_GUARD="$HOOKS_DIR/canonical-write-guard.sh"
 NO_HANDS="$HOOKS_DIR/orchestrator-no-hands-guard.sh"
 STATUS_DIGEST="$HOOKS_DIR/project-status-digest.sh"
 WRITEBACK_GATE="$HOOKS_DIR/status-writeback-gate.sh"
+REGISTRY_DIGEST="$HOOKS_DIR/worker-registry-digest.sh"
+REUSE_GUARD="$HOOKS_DIR/reuse-check-guard.sh"
+REGISTRY_WRITE="$HOOKS_DIR/worker-registry-write.sh"
 
 # 2. Persist HUB_DIR (and, for --in-place, HOOKS_DIR) to shell rc.
 # In-place mode keeps hooks in this repo dir, which is NOT the default
@@ -87,9 +90,10 @@ SETTINGS="$HUB_DIR/.claude/settings.json"
 mkdir -p "$HUB_DIR/.claude"
 [ -f "$SETTINGS" ] && cp "$SETTINGS" "$SETTINGS.bak.$(date +%s)" && echo "Backed up existing settings.json"
 
-python3 - "$SETTINGS" "$SYNC" "$WRITE_GUARD" "$NO_HANDS" "$STATUS_DIGEST" "$WRITEBACK_GATE" <<'PY'
+python3 - "$SETTINGS" "$SYNC" "$WRITE_GUARD" "$NO_HANDS" "$STATUS_DIGEST" "$WRITEBACK_GATE" "$REGISTRY_DIGEST" "$REUSE_GUARD" "$REGISTRY_WRITE" <<'PY'
 import json, os, sys
-settings_path, sync, write_guard, no_hands, status_digest, writeback_gate = sys.argv[1:7]
+(settings_path, sync, write_guard, no_hands, status_digest, writeback_gate,
+ registry_digest, reuse_guard, registry_write) = sys.argv[1:10]
 
 data = {}
 if os.path.exists(settings_path):
@@ -126,10 +130,13 @@ def ensure(event, matcher, command, **extra):
 
 ensure("SessionStart", None, status_digest, timeout=30, statusMessage="Pulling tracked-project status…")
 ensure("SessionStart", None, sync, timeout=15, statusMessage="Syncing canonical…")
+ensure("SessionStart", None, registry_digest, timeout=15, statusMessage="Surfacing reusable workers…")
 ensure("UserPromptSubmit", None, sync, timeout=15)
 ensure("PreToolUse", "Write", write_guard, timeout=10)
 ensure("PreToolUse", "Write|Edit|Bash", no_hands, timeout=10)
 ensure("PreToolUse", "mcp__.*", no_hands, timeout=10)
+ensure("PreToolUse", "Task|Agent", reuse_guard, timeout=10)
+ensure("PostToolUse", "Task|Agent", registry_write, timeout=10)
 ensure("Stop", None, writeback_gate, timeout=30, statusMessage="STATUS write-back gate…")
 
 with open(settings_path, "w") as f:

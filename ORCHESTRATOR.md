@@ -44,6 +44,13 @@ mention). So:
   / doing work -> stop and dispatch". **Read is not guarded** (reading live to keep truth
   is the correct path); working inside a spoke's own session, or the hub editing its own
   files, never fires. v1 is non-blocking; once stable, upgrade to a hard block.
+- **"Dispatch" now means "reuse-first", not "spawn".** When the no-hands guard sends you
+  to dispatch, the reflex is NOT to spawn a fresh worker — it's to **check the worker
+  registry (`active-workers.json`) first and continue a live worker via `SendMessage`**;
+  spawn fresh only when none can be continued (and register it on spawn). Default = **one
+  active worker per spoke**. Full discipline + the two hard lessons (guard must live in
+  hub/global settings; register on spawn because auto-registration is unreliable) →
+  **[docs/worker-reuse.md](docs/worker-reuse.md)** and the "Dispatch spec" section below.
 
 ## One loop
 
@@ -96,6 +103,87 @@ claude -p "<task brief>" --dangerously-skip-permissions   # only for safe, rever
 or spawn a sub-agent via the Agent / Workflow tools. The worker finishes, returns its
 result, the hub reads it.
 
+## Execution routing: dispatch a worker vs one continuous context
+
+> The no-hands default is **fire-and-forget = dispatch a worker**. But one class of work —
+> **tight-iteration debugging** — makes dispatching a fresh worker actively stupid: each new
+> worker re-learns the project from zero (burning time + tokens) and throws away the
+> "already-ruled-out" list the last round built. Learned the hard way: on a hard bug, firing
+> four separate workers that each guessed a different root cause hit nothing; switching to one
+> continuous context that accumulated diagnostics and closed in step by step is what found and
+> fixed it. **This is the explicit exception to no-hands.**
+
+**Before acting, decide in one sentence:**
+> "Can I write a **complete brief + objective acceptance** right now, and land it in
+> **one round** with high probability?"
+
+- **Yes** → **dispatch a worker (fire-and-forget)**. Bounded, parallelizable, acceptance
+  writable up front: produce N units, review a PR, pull data, run an analysis. Goes through
+  the no-hands rule + doer/reviewer separation.
+- **No** (root cause unknown / needs "change → test → change" to converge / you can't write
+  full acceptance yet / there's a human-in-the-loop test cycle) → **one continuous context**.
+
+**How to run one continuous context (pick one):**
+- ① **The hub works inline**: read the spoke's files once, then make all edits in this
+  session — during tight-iteration debugging the hub *may* touch spoke code (the exception
+  to no-hands); or
+- ② **Drive a single worker**: keep `SendMessage`-ing the *same* worker (preserving its
+  onboarded context + ruled-out list). **Never open a new Agent per bug.**
+
+**IRON RULE: for the same bug / same task, never "hit a wall → open a new worker".** To swap
+executors, only message the same agent (`SendMessage`); never cold-start a new one that
+re-learns the project from scratch. **Trigger to self-check:** the moment you're about to
+dispatch a *second* worker for the *same* thing → that's the signal. Stop. Switch to inline
+or continue the original worker.
+
+Boundaries: "one round or not" is about **certainty**, not task size (producing 6 units is big
+but certain → dispatch; changing 1 line with an unknown root cause → one continuous context).
+This only relaxes the "tight-iteration debugging" class; all other spoke work stays on the
+dispatch default, and red zones stop for the human regardless of mode.
+
+## Dispatch spec: fat orchestrator + thin worker (save tokens without losing accuracy)
+
+> **Root cause of cost**: the orchestrator's token bulk = **coordination tax** — every fresh
+> worker re-learns the spoke from zero (onboarding tax), while reused workers carry bloat and
+> staleness. This is the built-in price of division of labor (cache vs stateless trade-off);
+> you can't dodge it, but you can *design its size*. The move = keep the "how to coordinate"
+> burden **on the hub** (its context is already loaded — no extra spend), and let the worker
+> do only the single, pre-fed piece of execution. Accuracy comes from **externalized
+> canonical (the worker reads it live for current state) + the hub as red-line curator**, not
+> from the worker reading everything. **If the canonical drifts, this backfires into
+> "confidently feeding the wrong thing" — so lean, single-source, reference-not-copy canonical
+> is the bedrock of this pattern, not an optional nicety.**
+
+1. **Pre-route + inject red lines (biggest lever).** Don't make the worker "read the whole
+   CLAUDE.md + explore the skill index" itself. The hub, whose context is already loaded,
+   routes for it: the brief **names which file(s) to read + inlines the relevant red lines**;
+   the worker reads only what it's pointed at + does a cheap sanity-check against that live
+   pointer. (Prerequisite: the hub must actually know the spoke first; when unsure how to
+   route, fall back to "let the worker read the full CLAUDE.md + walk the skill index".)
+2. **Right-size: not every task deserves a worker.** Pure archiving of an **already-written,
+   zero-judgment, simple-format** artifact → the hub may just write it (don't pay a full
+   onboarding to move one file). Anything needing judgment / production / a spoke skill →
+   still a worker.
+3. **Tier the model / return length.** Mechanical work (archiving / reformatting / running a
+   fixed command) → dispatch a **cheaper/lower-effort model**, not your top model to move a
+   file; and **cap the return** (≤N lines, "path + the points that need the human"), don't let
+   the worker write a long report and burn output tokens.
+4. **Reuse a worker on a hot burst** (distinct from the tight-iteration exception above): when
+   you happen to have **several related tasks in the same spoke queued right now, back to
+   back** → use the same just-onboarded worker to do them all (`SendMessage` to continue),
+   saving repeated onboarding. Qualifiers: **now + back-to-back + related**; if time passed /
+   unrelated / the worker has gone bloated → retire it and start fresh.
+   > **Structural, not willpower**: "hot-burst reuse" is enforced by default **one active
+   > worker per spoke** + `hooks/reuse-check-guard.sh` (PreToolUse on `Task|Agent`). When you
+   > dispatch and the prompt targets a spoke, it fires a "reuse check" that pushes you to
+   > `SendMessage`-continue rather than blindly spawn. Pass-through exceptions: (1) fanning out
+   > in parallel, (2) an independent review (doer != reviewer needs a fresh context), (3) a
+   > stale snapshot (time passed / the spoke changed — reusing would act wrong). Full
+   > discipline + hard lessons → [docs/worker-reuse.md](docs/worker-reuse.md).
+
+The default is still "no hands = fire-and-forget dispatch a worker"; this section just adds
+token-saving constraints on top, it does not change the red lines themselves.
+
 ## Four knobs (run through these before every dispatch)
 
 | Knob | Rule |
@@ -131,6 +219,13 @@ as volume grows, drop to a daily digest.
 
 ## Acceptance logic (how to judge an agent really finished — don't trust its self-report)
 
+0. **The hub grasps the output spec first (before dispatch)**: before dispatching a
+   produce/format/write task, the hub **reads the project's own output spec itself** and
+   writes the format/style acceptance criteria into the brief + hands them to the reviewer.
+   Don't outsource "knowing the standard" to the worker — **a standard you don't hold you can
+   neither dispatch to nor verify** (learned the hard way: dispatching + accepting without
+   reading the spec first let malformed output through). The reviewer's acceptance dimensions
+   must **include format**, not just content.
 1. **Objective, externally visible, pre-defined**: acceptance criteria are fixed before
    dispatch and an outsider can verify them (build passes / tests green / file exists /
    screenshot / URL 200). "I looked, seems fine" != done.

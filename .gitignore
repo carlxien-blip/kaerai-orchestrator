@@ -4,6 +4,10 @@
 # settings.json backups created by install.sh
 .claude/settings.json.bak.*
 
+# live worker registry — your actual dispatched-worker entries are private/machine-local
+# (the .example schema is tracked; the real file is not)
+active-workers.json
+
 # OS / editor cruft
 .DS_Store
 *.swp

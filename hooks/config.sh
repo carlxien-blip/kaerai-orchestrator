@@ -17,6 +17,9 @@
 #                      Default: docs/first-principles.md
 #   SYNC_STATE_DIR   — where canonical-sync remembers per-session mtimes.
 #                      Default: $HOME/.claude/canonical-sync-state
+#   WORKER_REGISTRY  — JSON file where the hub records live dispatched workers
+#                      (spoke -> agentId + task + ts) so sessions can reuse them.
+#                      Default: $HUB_DIR/active-workers.json
 #
 # Hooks fail safe: if HUB_DIR is unset, hooks exit 0 silently (never break a session).
 
@@ -26,6 +29,7 @@
 : "${HUB_CANONICAL:=${HUB_DIR%/}/current_state.md}"
 : "${SPOKE_CANONICAL:=docs/first-principles.md}"
 : "${SYNC_STATE_DIR:=${HOME}/.claude/canonical-sync-state}"
+: "${WORKER_REGISTRY:=${HUB_DIR%/}/active-workers.json}"
 
 # Helper: read a JSON field from stdin payload already captured in $1 (the input),
 # field name in $2. Prints empty string on any error.

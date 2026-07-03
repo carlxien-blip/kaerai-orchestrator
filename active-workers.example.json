@@ -1,0 +1,10 @@
+{
+  "_note": "Live worker registry, keyed by spoke root. The hub records a worker here right after spawning it (spoke -> agentId + task + ts), so other sessions reuse it via SendMessage instead of spawning fresh (= re-paying onboarding). Copy this to active-workers.json (git-ignored) in your hub, or let worker-registry-write.sh create it. Entries older than 24h are treated as dead. See docs/worker-reuse.md.",
+  "workers": {
+    "/absolute/path/to/acme-web": {
+      "agentId": "abc123",
+      "task": "example: implement the checkout flow",
+      "ts": 0
+    }
+  }
+}
