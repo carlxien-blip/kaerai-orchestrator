@@ -54,7 +54,10 @@ own copy. You talk to one mouth — the hub — and the hub dispatches workers i
    A worker inside a spoke reads only that spoke's files, never the hub's decision log. So
    push every decision *both ways*: into the spoke's own canonical doc (basis for execution)
    and the hub log (the why + traceability). Push only to the hub and the spoke never learns,
-   and the next two sessions fight.
+   and the next two sessions fight. And updating the canonical isn't the finish line either:
+   **grep the old value across the whole instruction surface and zero out every stale copy —
+   a decision has landed only when the old truth greps to zero**
+   (the blast-radius sweep — see [docs/decision-protocol.md](docs/decision-protocol.md)).
 3. **Sync truth across sessions in real time.** A canonical file changing in one session is
    auto-injected into other running sessions (`canonical-sync` hook). No verbal reminders, no
    relying on the model to remember to re-read.
@@ -88,7 +91,7 @@ We haven't seen another project do exactly this (cross-session canonical
 auto-sync via Claude Code hooks). Wire up just this one, feel the difference, then funnel into
 the full methodology when you're ready.
 
-## 5. Three battle-tested gotchas
+## 5. Four battle-tested gotchas
 
 These are the non-obvious lessons — the part you'd only learn by getting burned.
 
@@ -114,10 +117,17 @@ that spoke's CLAUDE.md, skill routing, and canonical — and end up acting ignor
 already exists. Willpower doesn't fix this; a hook does.
 
 `hooks/orchestrator-no-hands-guard.sh` is a **PreToolUse** hook that fires when the hub session
-tries to act directly on a spoke (edit its files / a Bash command mentioning its path / any MCP
-call) and makes it self-classify: *keeping truth -> continue; doing work -> stop and dispatch.*
-Read is never guarded (reading live to keep truth is correct). Start non-blocking; upgrade to a
-hard block once you trust it.
+tries to act directly on a spoke (edit its files / a write-shaped Bash command mentioning its
+path / any MCP call) and makes it self-classify into three lanes: *keeping truth -> continue;
+pure archiving (filing an already-written, zero-judgment, simple-format artifact) -> continue,
+after glancing at the target's live conventions; doing work -> stop and dispatch.* Read is
+never guarded (reading live to keep truth is correct), and read-only Bash commands don't
+trigger it — false positives spend a guard's credibility, and a guard nobody believes is
+already off. One hardening lesson from a live review (2026-07-04): detect "am I the hub
+session" from the **session's startup directory**, not the shell's cwd — with a cwd-based
+check, the guard silently went offline the moment the hub session `cd`-ed into a spoke,
+which is exactly when it's needed. Start non-blocking; upgrade to a hard block once you
+trust it.
 
 ### Gotcha C — reuse workers before spawning; register on spawn; guard on the hub
 
@@ -128,10 +138,28 @@ worker per spoke**: keep a tiny registry (`active-workers.json`), and continue a
 `SendMessage` instead of cold-starting a new Agent. Two non-obvious traps: **(a)** a hook meant
 to intercept hub-dispatched workers must live in the **hub / global** `settings.json`, not a
 spoke-local one — a hub-spawned worker runs in the hub's frame, so a spoke-local hook never
-fires for it; **(b)** **register on spawn by hand** — auto-registration via a PostToolUse hook on
-the Agent tool is unreliable, so don't count on it alone. Three hooks support this
-(`worker-registry-digest.sh`, `reuse-check-guard.sh`, `worker-registry-write.sh`). Full writeup:
-**[docs/worker-reuse.md](docs/worker-reuse.md)**.
+fires for it; **(b)** **auto-registration lies in both directions** — we first assumed the
+PostToolUse auto-register might not fire; live verification (2026-07-04) showed it fires fine
+and the real bug is *mis*-registration: a read-only scout whose prompt merely mentioned a
+spoke path got registered as that spoke's worker, clobbering the real one. Hence: register
+only on an explicit `[REGISTER-WORKER:<spoke-root>]` marker in the brief, protect live
+entries from being overwritten, and still hand-verify after a real spawn. Three hooks support
+this (`worker-registry-digest.sh`, `reuse-check-guard.sh`, `worker-registry-write.sh`). Full
+writeup: **[docs/worker-reuse.md](docs/worker-reuse.md)**.
+
+### Gotcha D — the brief itself is a failure surface: doer and reviewer both obey it
+
+Pre-routing a worker's brief (naming which files to read + inlining the red lines) is the
+biggest token lever — and the sharpest way to be wrong. We once hand-invented a production
+brief for a job the spoke already had a dedicated skill for: the worker followed the brief,
+the reviewer reviewed against the brief, everything came back green, and the entire job had
+to be redone. **A wrong pre-routed brief is worse than no routing — it's confidently feeding
+the wrong thing, and doer/reviewer separation cannot catch it because both sit downstream of
+the brief.** Two fixes: the hub must check the spoke's skill index before writing any
+production brief (never improvise a brief that shadows an existing skill), and the
+independent reviewer's **step 0 is auditing the brief itself** against the spoke's index /
+canonical — if the brief is wrong, bounce it to the hub without reviewing the artifact.
+Details: ORCHESTRATOR.md, "Dispatch spec" + "Dispatch + review flow".
 
 ## 6. Quick start (5 minutes)
 
@@ -179,7 +207,7 @@ apply — but the methodology in `ORCHESTRATOR.md` and `docs/` still travels).
 | `scripts/spoke-onboard.sh` | idempotently bring a project up to the spoke contract |
 | `templates/` | empty-shell templates: hub/spoke CLAUDE.md, STATUS, first-principles, decision, asset-registry, contract checklist |
 | `examples/` | a worked, fictional example: one hub + two spokes (`acme-web`, `acme-api`) |
-| `docs/` | deeper dives: worker reuse, multi-session sync, intervention standard, doer/reviewer bias, brain/hands, comparison with BMAD & LangGraph |
+| `docs/` | deeper dives: decision protocol (blast-radius sweep), worker reuse, multi-session sync, intervention standard, doer/reviewer bias, brain/hands, comparison with BMAD & LangGraph |
 | `install.sh` | wire hooks into the hub + set `HUB_DIR` |
 
 ## How it compares (briefly)

@@ -42,6 +42,13 @@ doesn't expose cleanly. The hook approach piggybacks on the prompt cycle: the mo
 interact with a stale session, it self-corrects. No daemon, no extra process, no polling — and
 it fails safe (any error -> silent `exit 0`, never interrupts a session).
 
+## Beyond file writes: commit-time concurrency
+
+Syncing reads is half the story — parallel sessions also collide at **commit time**
+(committing a stale snapshot reverts a co-worker's landed changes; `git add -A` in a
+shared tree smuggles someone else's half-done edits into your batch). The rules live in
+ORCHESTRATOR.md, "Concurrency-safety protocol", items 4–5 (single home; not repeated here).
+
 ## Failure-safety
 
 Every path in the hook degrades to `exit 0`:

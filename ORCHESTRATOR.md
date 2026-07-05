@@ -64,8 +64,11 @@ mention). So:
    the brief's first line forces onboarding (workers don't auto-load the spoke's CLAUDE.md).
 4. Worker onboards per the first line (reads the project's CLAUDE.md + walks pointers)
    -> does the work -> returns a structured result (what it did / build·test pass or fail / where it's stuck).
-5. Hub reviews against acceptance: pass -> report to human; fail -> revise brief, dispatch
-   another round (transient state goes in jobs/, disposable).
+5. Hub reviews against acceptance: pass -> report to human; fail -> rule "surface or
+   structural" first, then pick the redo mode (see the rework discipline in the review flow
+   below). All rounds are recorded in `jobs/`; **finished jobs are NOT deleted — `jobs/` is
+   the audit layer** (revised 2026-07-04; the old "transient, disposable" stance is retired:
+   the ledger is what makes rework rates countable and knob-loosening data-driven).
 6. Report to human + surface red zones / forks.
 7. (human sign-off triggers write-back) Human satisfied -> hub writes "latest state + todos"
    back to the project's STATUS home (git project -> STATUS.md). Next time, resume from there.
@@ -160,6 +163,19 @@ dispatch default, and red zones stop for the human regardless of mode.
    the worker reads only what it's pointed at + does a cheap sanity-check against that live
    pointer. (Prerequisite: the hub must actually know the spoke first; when unsure how to
    route, fall back to "let the worker read the full CLAUDE.md + walk the skill index".)
+   - **Pre-routing's standing obligation (learned 2026-07-03): check the spoke's skill index
+     before writing a production brief.** If the spoke has a skill index, every production
+     task in the brief must name the spoke's own skill for it — the hub may NOT improvise a
+     production brief that shadows a skill the spoke already has. We dispatched a
+     document-production job with a hand-invented brief while the spoke had a dedicated
+     skill for exactly that format; doer and reviewer both obeyed the brief, everything came
+     back green, and the whole job had to be redone. **A wrong pre-routed brief is worse
+     than no routing — it's confidently feeding the wrong thing.** Unsure -> fall back to
+     "worker self-routes via the index".
+   - **Registration marker**: the brief of a real (reusable) worker carries one line —
+     `[REGISTER-WORKER:<spoke-root>]` — so the registry hook can auto-register it. Read-only
+     scouts (explore/plan agents) **never** carry the marker; a spoke path merely appearing
+     in a prompt is not a dispatch (see docs/worker-reuse.md, hard lesson B).
 2. **Right-size: not every task deserves a worker.** Pure archiving of an **already-written,
    zero-judgment, simple-format** artifact → the hub may just write it (don't pay a full
    onboarding to move one file). Anything needing judgment / production / a spoke skill →
@@ -190,7 +206,7 @@ token-saving constraints on top, it does not change the red lines themselves.
 |---|---|
 | **Red zone** | Touching <REPLACE: your irreversible/external/money surfaces — e.g. production server / payments / deploys / external source of truth> -> **always stop and ask the human**; workers may not do these autonomously. Per-project red zones live in `projects.md`. |
 | **Acceptance** | Every task carries an **objective** test (build passes / tests green / screenshot / file exists). No objective test = not allowed to declare "done". |
-| **Loop limit** | At most N rounds per goal (default 3) + a token budget cap; on hitting it, stop and ask the human — don't spin and burn money. |
+| **Loop limit** | At most N rounds per goal (default 3); on hitting it, stop and ask the human — don't spin and burn money. Rounds are countable in `jobs/`. (An earlier "token budget cap" clause was deleted 2026-07-04: **a rule with no mechanism enforcing it doesn't get declared** — unenforced rules are decoration that trains you to ignore the enforced ones.) |
 | **Intervention** | Before dispatch (P0) / on a red zone / on completion -> involve the human. |
 
 ## Intervention standard (what needs the human, what doesn't)
@@ -200,6 +216,15 @@ token-saving constraints on top, it does not change the red lines themselves.
 > axis is "**how cheaply can this be reversed**", not "can it be reversed at all": put the
 > judgment at the fork (where changing course is cheapest), not at the acceptance gate. Tune
 > the knobs looser as trust grows (loosen first: report frequency / pure-feature releases).
+>
+> **Knob-loosening exit condition (added 2026-07-04 — cures "the trust-building period has no
+> exit = you're the bottleneck forever")**: use the `jobs/` ledger as the data. **Five
+> consecutive jobs of the same task class passing acceptance in one round (zero rework) ->
+> loosen one knob** (order: report frequency drops to a daily digest first, then pure-feature
+> releases stop waiting for the human). **Two reworks in that class after loosening -> the
+> knob goes back.** The rework rate is the dashboard; the data decides, not the feeling. The
+> human's two felt pains (rework, being the bottleneck) are one chain: stop the rework -> you
+> dare loosen the knobs -> you stop being the bottleneck.
 
 **Needs the human (both ends):**
 - **Before · set direction & taste**: (a) changing structure/architecture/choosing an
@@ -226,6 +251,13 @@ as volume grows, drop to a daily digest.
    neither dispatch to nor verify** (learned the hard way: dispatching + accepting without
    reading the spec first let malformed output through). The reviewer's acceptance dimensions
    must **include format**, not just content.
+   **Corollary (learned 2026-07-03): production standards must live in an execution doc the
+   worker actually reads — not in a taste/strategy doc it never loads.** A recurring task
+   type (e.g. "add a manual/resource page") deserves its own flow doc that the hub pulls the
+   brief's standards + template from; improvising the brief each time silently drops the
+   house standards. We had a writing standard that existed only in a judgment/taste doc
+   outside every worker's reading path — it evaporated at dispatch time on every single job
+   of that type until it was moved into the task type's execution doc.
 1. **Objective, externally visible, pre-defined**: acceptance criteria are fixed before
    dispatch and an outsider can verify them (build passes / tests green / file exists /
    screenshot / URL 200). "I looked, seems fine" != done.
@@ -248,15 +280,34 @@ as volume grows, drop to a daily digest.
    behavior cases / which files must not be touched).
 2. **Dispatch a worker (independent context, inside the project dir)** — reads the brief +
    project canonical -> implements -> **runs build/test/lint itself** -> reports done only on
-   green, **with evidence** (test output / diff), not just "done".
+   green, **with evidence** (test output / diff), not just "done". **Commit provenance
+   (added 2026-07-04)**: every worker commit message ends with the job-ledger filename
+   (e.g. `job:2026-07-03_<spoke>_<task>`) — the job file records the commits, the commits
+   record the job; traceable in both directions.
 3. **Dispatch an independent reviewer (AFTER the worker delivers, not concurrently)** — the
    reviewer reviews the product; code that doesn't exist can't be reviewed, hence after. Its
    "independence" = **independent context**: fresh mind, never wrote this, told to **"find
    faults / assume it's broken"** (adversarial), checks the diff against spec, **re-runs it
    itself**, doesn't trust the worker's words. It specifically covers the gap that "tests
    green != actually built to spec" (missed cases / broke something else / doesn't match spec).
-4. **Falls short -> bounce back to the worker for another round** (loop limit N, default 3; on
-   hitting it stop and ask the human, don't spin and burn money).
+   **Reviewer step 0 (added 2026-07-04): audit the BRIEF itself before the product.** Check
+   the brief's routing + standards independently against the spoke's skill index / canonical;
+   if the brief is wrong, **bounce it to the hub without reviewing the artifact** — an
+   artifact reviewed green against a wrong spec is still wrong. Root cause: doer and reviewer
+   both obey the brief, so a mis-routed brief makes both come back green while the job is
+   wrong (that's how the document-production job above shipped a full redo). Reviewer
+   independence must cover the spec layer, not just the product layer.
+4. **Falls short -> first rule "is the error surface or structural", then pick the redo mode
+   (rework discipline, added 2026-07-04).** **Surface error** (a local bug / wording / missed
+   case — the frame is sound) -> bounce back to the **original worker** to patch (warm
+   context, cheap). **Structural error** (direction / framing / standard is wrong — the
+   artifact is rotten at the root) -> **revert to the clean baseline + a brand-new worker**;
+   stacking patches on a bad artifact inside a contaminated context is forbidden ("fixing it
+   into correctness on a wrong base" is an illusion — it gets murkier with every pass). Loop
+   limit N still applies (default 3; on hitting it stop and ask the human, don't spin and
+   burn money). This does not conflict with the tight-iteration exception above: that one is
+   for **unknown root cause** (diagnosis needs a continuous context), this one is for **known
+   root cause, rotten artifact** (a redo needs a clean context).
 5. **The hub is not the final judge** — it doesn't review its own dispatched work and say
    "looks good" (that's max bias). The hub only **aggregates** deterministic results + the
    reviewer's verdict, and hands the residual **taste / behavior** judgment to the human.
@@ -315,6 +366,21 @@ line). **Rely on templates, not hand-wiring (structure over willpower).**
    adds new files / appends, never rewrites — naturally concurrency-safe.
 3. **When canonical-sync says "it changed", re-read before writing.** The hook already pushes
    "someone changed this file" to you; on seeing it, re-read, don't write on a stale version.
+4. **Commit-time: re-read the disk before you commit (2026-07-03, from running several
+   workers in one repo at once).** Your in-context version of a file is a snapshot from when
+   you read it; a parallel worker may have landed changes since. Before committing a file two
+   workers both touched, **re-read the latest on-disk version and merge/dedupe your delta into
+   it** — committing your snapshot as-is silently reverts the other worker's landed work (the
+   same lost-update bug as rule 1, one level up, at commit granularity). Real scar: two
+   workers edited the same resource section of one site article back to back; "re-read disk +
+   rewrite in place" merging is the only reason neither overwrote the other / no duplicate
+   entries landed. The version in your editor/context is not the truth — the disk is.
+5. **Batch commits per logical change; stage by explicit file list.** In a shared working
+   tree, never `git add -A` / `git add .` — a parallel session's edits get smuggled into
+   your batch, and the mixed commit can no longer be reverted or bisected cleanly. One
+   logical change = one commit = an explicitly named set of files. Real scar (2026-07-03): at
+   ship time the working tree was carrying another session's not-yet-accepted changes; the
+   explicit file list is what kept them out of the release batch.
 - **Structural guard**: `canonical-write-guard.sh` (PreToolUse-on-Write) warns (non-blocking)
   when you blind-write an existing shared canonical, nudging you to Edit or re-read first.
 

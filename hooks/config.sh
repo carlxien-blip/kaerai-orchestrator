@@ -51,3 +51,20 @@ hook_is_hub() {
   [ -n "$HUB_DIR" ] || return 1
   case "$1" in "$HUB_DIR"|"$HUB_DIR"/*) return 0 ;; *) return 1 ;; esac
 }
+
+# Helper: which project does THIS SESSION belong to? Prints a path.
+# Prefers $CLAUDE_PROJECT_DIR (the session's startup project dir — stable for the
+# whole session) and only falls back to the payload cwd ($1).
+#
+# Why (learned 2026-07-04, hooks review): the payload cwd follows the shell — the
+# moment a hub session `cd`s into a spoke to poke around, cwd-based hub detection
+# flips to "not the hub" and every hub-side guard silently goes offline, exactly
+# when it's most needed. Session identity must come from where the session
+# STARTED, not where its shell happens to stand right now.
+hook_session_project() {
+  if [ -n "$CLAUDE_PROJECT_DIR" ]; then
+    printf '%s' "$CLAUDE_PROJECT_DIR"
+  else
+    printf '%s' "$1"
+  fi
+}

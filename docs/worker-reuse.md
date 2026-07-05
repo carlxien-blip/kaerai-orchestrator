@@ -27,8 +27,9 @@ existing one with `SendMessage` instead of cold-starting a new Agent.
    next instruction — its context is already warm, so **don't re-send the whole
    pre-routed brief**, just the next step.
 3. **Spawn only as fallback.** Spawn a fresh worker when none can be continued — then
-   pre-route its brief (name the file(s) to read + inline the red lines) and **register
-   it immediately** (see hard lesson B).
+   pre-route its brief (name the file(s) to read + inline the red lines), put
+   `[REGISTER-WORKER:<spoke-root>]` in the brief (real reusable workers only — never on
+   read-only scouts), and **register it immediately** (see hard lesson B).
 4. **When a fresh spawn IS right** (the reuse-check exceptions): (a) you're fanning out
    in parallel; (b) an independent review — doer != reviewer deliberately needs a fresh,
    uncontaminated context; (c) a stale snapshot — enough time has passed, or the spoke
@@ -42,7 +43,7 @@ existing one with `SendMessage` instead of cold-starting a new Agent.
 |---|---|---|
 | `worker-registry-digest.sh` | SessionStart | surfaces reusable workers (by spoke, < 24h old) into context |
 | `reuse-check-guard.sh` | PreToolUse on `Task\|Agent` | on dispatch to a spoke, forces a "can you reuse?" prompt (non-blocking) |
-| `worker-registry-write.sh` | PostToolUse on `Task\|Agent` | best-effort auto-register on spawn (see lesson B) |
+| `worker-registry-write.sh` | PostToolUse on `Task\|Agent` | marker-gated auto-register on spawn, with overwrite protection (see lesson B) |
 
 All three are parameterized via `hooks/config.sh` (`WORKER_REGISTRY`, `TRACKED_FILE`) and
 fail safe (any error -> silent `exit 0`). They only act inside the hub session.
@@ -59,12 +60,29 @@ where the work is actually dispatched *from* (the hub / global settings), or the
 do nothing for exactly the case they exist for. (`install.sh` wires them into the hub's
 settings for this reason.)
 
-### Lesson B — register on spawn; don't rely on auto-registration
+### Lesson B — auto-registration lies in both directions; marker-gate it, and still verify by hand
 
-Auto-registration via a PostToolUse hook on the Task/Agent tool is **not reliable** —
-that event does not consistently fire for agent spawns across setups. So treat
-`worker-registry-write.sh` as best-effort only, and make the dispatcher **write the
-registry entry by hand right after spawning** (`spoke -> agentId + task + ts`). The
-registry is only useful if it's actually populated; a missed auto-write means the next
-session spawns a duplicate and re-pays onboarding — the exact bug this whole mechanism
-exists to prevent.
+We originally shipped this saying "PostToolUse may not fire for Task/Agent — don't rely
+on it". On 2026-07-04 we verified live that it **does** fire in our setup — and found the
+failure mode is actually worse than silence: **mis-registration**. The hook matched
+spokes by "does a tracked spoke path appear in the prompt", so a **read-only scout**
+agent whose prompt merely *mentioned* a spoke path got auto-registered as that spoke's
+live worker — **overwriting the entry for the real, reusable one**. The registry then
+actively pointed the next dispatch at a scout with none of the worker's context. A
+registry that's wrong is worse than one that's empty.
+
+Two structural fixes (both in `worker-registry-write.sh`):
+
+1. **Explicit marker only.** The hook registers only when the brief contains
+   `[REGISTER-WORKER:<spoke-root>]`. The dispatcher puts the marker in the brief of a
+   real (reusable) worker and **never** on read-only scouts. A path string happening to
+   appear in a prompt is not a dispatch.
+2. **Overwrite protection.** If the spoke already has a live entry (< 24h) with a
+   *different* agentId, the hook refuses to clobber it — that worker should be continued
+   or consciously retired, not silently lost.
+
+And one unchanged discipline: **treat auto-writes as leads, not truth.** After a real
+spawn, the dispatcher still hand-writes/verifies the entry
+(`spoke -> agentId + task + ts`). The registry is only useful if it's actually correct;
+a missed or wrong write means the next session spawns a duplicate and re-pays
+onboarding — the exact bug this whole mechanism exists to prevent.
